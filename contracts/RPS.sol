@@ -413,7 +413,7 @@ contract RockPaperScissorsGame is Pausable {
     ) internal pure returns (bytes32 r, bytes32 s, uint8 v) {
         require(sig.length == 65, "Invalid signature length");
 
-        assembly {
+        assembly ("memory-safe") {
             r := mload(add(sig, 32))
             s := mload(add(sig, 64))
             v := byte(0, mload(add(sig, 96)))

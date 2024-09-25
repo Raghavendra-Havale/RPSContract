@@ -1,6 +1,6 @@
 // Import the necessary dependencies from chai and ethers
 const { expect } = require("chai");
-const { ethers, hre } = require("hardhat");
+const { ethers } = require("hardhat");
 const { arrayify } = require("@ethersproject/bytes");
 
 describe("RockPaperScissorsGame Contract", function () {
@@ -17,10 +17,9 @@ describe("RockPaperScissorsGame Contract", function () {
     );
     [owner, player1, player2, addr1] = await ethers.getSigners();
 
-    // Deploy the contract with serverPublicKey as player1's address (for simplicity in testing)
-    rps = await RockPaperScissorsGame.deploy(player1.address);
+    // Deploy the contract with serverPublicKey set as the owner address
+    rps = await RockPaperScissorsGame.deploy(owner.address);
     await rps.waitForDeployment();
-    // await rps.deployed();
     console.log(rps.target);
 
     gameId = ethers.keccak256(ethers.toUtf8Bytes("game1"));
@@ -155,18 +154,18 @@ describe("RockPaperScissorsGame Contract", function () {
       const player2Wins = 1;
       const winner = player1.address;
 
-      // Step 2: Compute the game hash in the same way as the contract
+      // Step 2: Compute the game hash using ethers.utils.solidityPacked to match Solidity's abi.encodePacked
       const gameHash = ethers.keccak256(
-        ethers.AbiCoder.defaultAbiCoder().encode(
+        ethers.solidityPacked(
           ["bytes32", "uint8", "uint8", "address"],
           [gameId, player1Wins, player2Wins, winner]
         )
       );
 
-      // Step 3: Owner signs the computed hash off-chain
-      const signature = await owner.signMessage(arrayify(gameHash)); // Owner signs the hash
+      // Step 4: Owner (serverPublicKey) signs the prefixed hash off-chain
+      const signature = await owner.signMessage(arrayify(gameHash)); // Owner signs the prefixed hash
 
-      // Step 4: Owner submits the result to the contract
+      // Step 5: Owner submits the result to the contract
       await expect(
         rps
           .connect(owner)
@@ -182,7 +181,7 @@ describe("RockPaperScissorsGame Contract", function () {
         .to.emit(rps, "GameResultSubmitted")
         .withArgs(gameId, winner);
 
-      // Step 5: Verify game state
+      // Step 6: Verify game state
       const game = await rps.games(gameId);
       expect(game.state).to.equal(2); // Completed state
       expect(game.winner).to.equal(winner);
@@ -207,14 +206,18 @@ describe("RockPaperScissorsGame Contract", function () {
       const player2Wins = 1;
       const winner = player1.address;
 
+      // Compute the game hash
       const gameHash = ethers.keccak256(
-        ethers.AbiCoder.defaultAbiCoder().encode(
+        ethers.solidityPacked(
           ["bytes32", "uint8", "uint8", "address"],
           [gameId, player1Wins, player2Wins, winner]
         )
       );
 
+      // Owner signs the prefixed hash
       const signature = await owner.signMessage(arrayify(gameHash));
+
+      // Owner submits the result
       await expect(
         rps
           .connect(owner)
@@ -230,6 +233,7 @@ describe("RockPaperScissorsGame Contract", function () {
         .to.emit(rps, "GameResultSubmitted")
         .withArgs(gameId, winner);
 
+      // Player 2 raises a dispute
       await expect(rps.connect(player2).raiseDispute(gameId))
         .to.emit(rps, "DisputeRaised")
         .withArgs(gameId, player2.address);

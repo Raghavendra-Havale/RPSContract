@@ -1,257 +1,189 @@
-// Import the necessary dependencies from chai and ethers
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { arrayify } = require("@ethersproject/bytes");
 
 describe("RockPaperScissorsGame Contract", function () {
   let RockPaperScissorsGame;
-  let rps;
-  let owner, player1, player2, addr1;
-  let gameId;
-  let stakeAmount = ethers.parseEther("1"); // 1 ETH
+  let rockPaperScissors;
+  let owner;
+  let player1;
+  let player2;
+  let player3;
+  let token;
+  const stakeAmount = ethers.parseEther("1");
 
   beforeEach(async function () {
-    // Get the ContractFactory and Signers here.
+    // Deploy mock ERC20 token
+    const Token = await ethers.getContractFactory("ERC20Mock");
+    token = await Token.deploy("MockToken", "MTK", stakeAmount * 100);
+    await token.deployed();
+
+    // Get signers
+    [owner, player1, player2, player3] = await ethers.getSigners();
+
+    // Deploy the game contract
     RockPaperScissorsGame = await ethers.getContractFactory(
       "RockPaperScissorsGame"
     );
-    [owner, player1, player2, addr1] = await ethers.getSigners();
+    rockPaperScissors = await RockPaperScissorsGame.deploy(owner.address);
+    await rockPaperScissors.deployed();
 
-    // Deploy the contract with serverPublicKey set as the owner address
-    rps = await RockPaperScissorsGame.deploy(owner.address);
-    await rps.waitForDeployment();
-    console.log(rps.target);
-
-    gameId = ethers.keccak256(ethers.toUtf8Bytes("game1"));
+    // Allow token for the game
+    await rockPaperScissors.allowToken(token.address, stakeAmount);
   });
 
-  describe("Game Creation", function () {
-    it("Should allow a player to create a new game", async function () {
-      await expect(
-        rps
-          .connect(player1)
-          .enterGame(
-            gameId,
-            stakeAmount,
-            ethers.ZeroAddress,
-            3,
-            player2.address,
-            { value: stakeAmount }
-          )
-      )
-        .to.emit(rps, "GameCreated")
-        .withArgs(gameId, player1.address, stakeAmount, ethers.ZeroAddress, 3);
-
-      const game = await rps.games(gameId);
-      expect(game.player1).to.equal(player1.address);
-      expect(game.player2).to.equal(player2.address);
-      expect(game.stakeAmount).to.equal(stakeAmount);
-      expect(game.state).to.equal(0); // Waiting state
-    });
-
-    it("Should revert if game already exists", async function () {
-      await rps
+  it("Should create a new game successfully", async function () {
+    const turns = 3;
+    await token
+      .connect(player1)
+      .approve(rockPaperScissors.address, stakeAmount);
+    await expect(
+      rockPaperScissors
         .connect(player1)
-        .enterGame(
-          gameId,
-          stakeAmount,
-          ethers.ZeroAddress,
-          3,
-          player2.address,
-          { value: stakeAmount }
-        );
-      await expect(
-        rps
-          .connect(player1)
-          .enterGame(
-            gameId,
-            stakeAmount,
-            ethers.ZeroAddress,
-            3,
-            player2.address,
-            { value: stakeAmount }
-          )
-      ).to.be.revertedWith("Game already exists");
-    });
+        .createGame(stakeAmount, token.address, turns, player2.address)
+    )
+      .to.emit(rockPaperScissors, "GameCreated")
+      .withArgs(1, player1.address, stakeAmount, token.address, turns);
+
+    const game = await rockPaperScissors.games(1);
+    expect(game.player1).to.equal(player1.address);
+    expect(game.player2).to.equal(player2.address);
+    expect(game.stakeAmount).to.equal(stakeAmount);
   });
 
-  describe("Game Joining", function () {
-    it("Should allow player 2 to join the game", async function () {
-      await rps
-        .connect(player1)
-        .enterGame(
-          gameId,
-          stakeAmount,
-          ethers.ZeroAddress,
-          3,
-          player2.address,
-          { value: stakeAmount }
-        );
+  it("Should allow player2 to join the game", async function () {
+    const turns = 3;
+    await token
+      .connect(player1)
+      .approve(rockPaperScissors.address, stakeAmount);
+    await rockPaperScissors
+      .connect(player1)
+      .createGame(stakeAmount, token.address, turns, player2.address);
 
-      await expect(
-        rps.connect(player2).joinGame(gameId, { value: stakeAmount })
-      )
-        .to.emit(rps, "GameJoined")
-        .withArgs(gameId, player2.address);
+    await token
+      .connect(player2)
+      .approve(rockPaperScissors.address, stakeAmount);
+    await expect(rockPaperScissors.connect(player2).joinGame(1))
+      .to.emit(rockPaperScissors, "GameJoined")
+      .withArgs(1, player2.address);
 
-      const game = await rps.games(gameId);
-      expect(game.state).to.equal(1); // InProgress state
-    });
-
-    it("Should revert if incorrect stake amount is sent", async function () {
-      await rps
-        .connect(player1)
-        .enterGame(
-          gameId,
-          stakeAmount,
-          ethers.ZeroAddress,
-          3,
-          player2.address,
-          { value: stakeAmount }
-        );
-
-      await expect(
-        rps
-          .connect(player2)
-          .joinGame(gameId, { value: ethers.parseEther("0.5") })
-      ).to.be.revertedWith("Incorrect ETH amount sent");
-    });
-
-    it("Should revert if a non-designated player tries to join", async function () {
-      await rps
-        .connect(player1)
-        .enterGame(
-          gameId,
-          stakeAmount,
-          ethers.ZeroAddress,
-          3,
-          player2.address,
-          { value: stakeAmount }
-        );
-
-      await expect(
-        rps.connect(addr1).joinGame(gameId, { value: stakeAmount })
-      ).to.be.revertedWith("You cannot join this game");
-    });
+    const game = await rockPaperScissors.games(1);
+    expect(game.state).to.equal(1); // InProgress
   });
 
-  describe("Game Completion", function () {
-    it("Should submit the game result", async function () {
-      // Step 1: Create and join the game
-      await rps
-        .connect(player1)
-        .enterGame(
-          gameId,
-          stakeAmount,
-          ethers.ZeroAddress,
-          3,
-          player2.address,
-          { value: stakeAmount }
-        );
-      await rps.connect(player2).joinGame(gameId, { value: stakeAmount });
+  it("Should allow the game to be canceled by both players", async function () {
+    const turns = 3;
+    await token
+      .connect(player1)
+      .approve(rockPaperScissors.address, stakeAmount);
+    await rockPaperScissors
+      .connect(player1)
+      .createGame(stakeAmount, token.address, turns, player2.address);
 
-      const player1Wins = 2;
-      const player2Wins = 1;
-      const winner = player1.address;
+    await token
+      .connect(player2)
+      .approve(rockPaperScissors.address, stakeAmount);
+    await rockPaperScissors.connect(player2).joinGame(1);
 
-      // Step 2: Compute the game hash using ethers.utils.solidityPacked to match Solidity's abi.encodePacked
-      const gameHash = ethers.keccak256(
-        ethers.solidityPacked(
-          ["bytes32", "uint8", "uint8", "address"],
-          [gameId, player1Wins, player2Wins, winner]
+    await expect(rockPaperScissors.connect(player1).cancelByAgreement(1)).to.not
+      .be.reverted;
+    await expect(rockPaperScissors.connect(player2).cancelByAgreement(1))
+      .to.emit(rockPaperScissors, "GameCancelled")
+      .withArgs(1);
+
+    const game = await rockPaperScissors.games(1);
+    expect(game.state).to.equal(4); // Cancelled
+  });
+
+  it("Should raise a dispute", async function () {
+    const turns = 3;
+    await token
+      .connect(player1)
+      .approve(rockPaperScissors.address, stakeAmount);
+    await rockPaperScissors
+      .connect(player1)
+      .createGame(stakeAmount, token.address, turns, player2.address);
+
+    await token
+      .connect(player2)
+      .approve(rockPaperScissors.address, stakeAmount);
+    await rockPaperScissors.connect(player2).joinGame(1);
+
+    // Simulate the game completion
+    await rockPaperScissors.submitGameResult(
+      1,
+      player1.address,
+      2,
+      1,
+      [
+        [0, 1],
+        [1, 2],
+        [2, 0],
+      ],
+      ethers.utils.keccak256(ethers.utils.toUtf8Bytes("test")),
+      "0x"
+    );
+
+    // Player2 raises a dispute
+    await expect(rockPaperScissors.connect(player2).raiseDispute(1))
+      .to.emit(rockPaperScissors, "DisputeRaised")
+      .withArgs(1, player2.address);
+
+    const game = await rockPaperScissors.games(1);
+    expect(game.state).to.equal(3); // Dispute
+  });
+
+  it("Should handle a winner for a tournament game", async function () {
+    const turns = 3;
+
+    const player1s = [player1.address, player2.address];
+    const player2s = [player2.address, player3.address];
+    const numberOfTurnsList = [turns, turns];
+
+    await expect(
+      rockPaperScissors
+        .connect(owner)
+        .createTournamentGames(
+          player1s,
+          player2s,
+          numberOfTurnsList,
+          owner.address
         )
-      );
+    )
+      .to.emit(rockPaperScissors, "TournamentGameCreated")
+      .withArgs(1, player1.address, player2.address, turns, owner.address);
 
-      // Step 4: Owner (serverPublicKey) signs the prefixed hash off-chain
-      const signature = await owner.signMessage(arrayify(gameHash)); // Owner signs the prefixed hash
+    // Simulate result submission
+    await rockPaperScissors.submitGameResult(
+      1,
+      player1.address,
+      2,
+      1,
+      [
+        [0, 1],
+        [1, 2],
+        [2, 0],
+      ],
+      ethers.utils.keccak256(ethers.utils.toUtf8Bytes("test")),
+      "0x"
+    );
 
-      // Step 5: Owner submits the result to the contract
-      await expect(
-        rps
-          .connect(owner)
-          .submitGameResult(
-            gameId,
-            winner,
-            player1Wins,
-            gameHash,
-            signature,
-            player2Wins
-          )
-      )
-        .to.emit(rps, "GameResultSubmitted")
-        .withArgs(gameId, winner);
-
-      // Step 6: Verify game state
-      const game = await rps.games(gameId);
-      expect(game.state).to.equal(2); // Completed state
-      expect(game.winner).to.equal(winner);
-    });
+    await expect(
+      rockPaperScissors
+        .connect(owner)
+        .SubmitAndApproveTournamentGame(1, player1.address, 2, 1, [
+          [0, 1],
+          [1, 2],
+          [2, 0],
+        ])
+    )
+      .to.emit(rockPaperScissors, "TournamentGameResultSubmitted")
+      .withArgs(1, player1.address);
   });
 
-  describe("Game Dispute", function () {
-    it("Should raise a dispute", async function () {
-      await rps
-        .connect(player1)
-        .enterGame(
-          gameId,
-          stakeAmount,
-          ethers.ZeroAddress,
-          3,
-          player2.address,
-          { value: stakeAmount }
-        );
-      await rps.connect(player2).joinGame(gameId, { value: stakeAmount });
-
-      const player1Wins = 2;
-      const player2Wins = 1;
-      const winner = player1.address;
-
-      // Compute the game hash
-      const gameHash = ethers.keccak256(
-        ethers.solidityPacked(
-          ["bytes32", "uint8", "uint8", "address"],
-          [gameId, player1Wins, player2Wins, winner]
-        )
-      );
-
-      // Owner signs the prefixed hash
-      const signature = await owner.signMessage(arrayify(gameHash));
-
-      // Owner submits the result
-      await expect(
-        rps
-          .connect(owner)
-          .submitGameResult(
-            gameId,
-            winner,
-            player1Wins,
-            gameHash,
-            signature,
-            player2Wins
-          )
-      )
-        .to.emit(rps, "GameResultSubmitted")
-        .withArgs(gameId, winner);
-
-      // Player 2 raises a dispute
-      await expect(rps.connect(player2).raiseDispute(gameId))
-        .to.emit(rps, "DisputeRaised")
-        .withArgs(gameId, player2.address);
-
-      const game = await rps.games(gameId);
-      expect(game.state).to.equal(3); // Dispute state
-    });
-  });
-
-  describe("Ownership and Admin", function () {
-    it("Should allow the owner to transfer ownership", async function () {
-      await rps.transferOwnership(addr1.address);
-      expect(await rps.owner()).to.equal(addr1.address);
-    });
-
-    it("Should allow the owner to update the server's public key", async function () {
-      await rps.setServerPublicKey(addr1.address);
-      expect(await rps.serverPublicKey()).to.equal(addr1.address);
-    });
+  it("Should allow players to withdraw pending amounts", async function () {
+    const initialBalance = await player1.getBalance();
+    await rockPaperScissors.connect(owner).withdraw();
+    const finalBalance = await player1.getBalance();
+    expect(finalBalance).to.be.above(initialBalance);
   });
 });

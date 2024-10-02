@@ -62,7 +62,7 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
     uint256 public constant FEE_DENOMINATOR = 10000; // Used to calculate percentage
 
     uint256 public disputePeriod = 1 hours; // Configurable dispute period
-    uint256 public gameExpirationTime = 24 hours; // Time after which unstarted games can be cancelled
+    uint256 public gameExpirationTime = 1 hours; // Time after which unstarted games can be cancelled
     uint256 public maxTurns = 7; // Maximum number of turns, must be odd
 
     event GameCreated(
@@ -116,6 +116,7 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
 
     constructor(address _serverPublicKey) Ownable(msg.sender) {
         serverPublicKey = _serverPublicKey;
+        gameCounter.increment();
     }
 
     // Admin functions
@@ -135,6 +136,16 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         require(newFee <= 100, "Draw fee too high");
         drawFee = newFee;
         emit DrawFeeUpdated(newFee);
+    }
+
+    function updateDisputePeriod(uint256 newPeriod) external onlyOwner {
+        require(newPeriod <= 1 hours, "DisputePeriod too high");
+        disputePeriod = newPeriod;
+    }
+
+    function updategameExpirationTime(uint256 newPeriod) external onlyOwner {
+        require(newPeriod <= 24 hours, "GameExpirationTime too high");
+        gameExpirationTime = newPeriod;
     }
 
     function allowToken(
@@ -174,12 +185,10 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
     function createGame(
         uint256 stakeAmount,
         address tokenAddress,
-        uint256 numberOfTurns,
-        address player2
+        uint256 numberOfTurns
     ) external payable whenNotPaused nonReentrant {
         require(stakeAmount > 0, "Stake amount must be greater than zero");
         require(numberOfTurns > 0 && numberOfTurns % 2 == 1, "Invalid turns");
-        require(player2 != address(0), "Player2 address is null");
 
         if (tokenAddress == address(0)) {
             require(msg.value == stakeAmount, "Incorrect ETH amount sent");
@@ -207,7 +216,7 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
 
         games[gameId] = Game({
             player1: msg.sender,
-            player2: player2,
+            player2: address(0),
             stakeAmount: stakeAmount,
             tokenAddress: tokenAddress,
             state: GameState.Waiting,
@@ -238,7 +247,6 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         Game storage game = games[gameId];
         require(game.player1 != address(0), "Game does not exist");
         require(game.state == GameState.Waiting, "Game not available to join");
-        require(game.player2 == msg.sender, "You cannot join this game");
 
         if (game.tokenAddress == address(0)) {
             require(msg.value == game.stakeAmount, "Incorrect ETH amount sent");
@@ -250,6 +258,7 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
             );
         }
 
+        game.player2 = msg.sender;
         updatePlayerGameStats(msg.sender, gameId);
         game.state = GameState.InProgress;
         game.lastActionTime = block.timestamp;
@@ -419,7 +428,10 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
 
     function cancelUnstartedGame(uint256 gameId) external nonReentrant {
         Game storage game = games[gameId];
-        require(game.player1 == msg.sender, "Only game creator can cancel");
+        require(
+            game.player1 == msg.sender || owner() == msg.sender,
+            "Only game creator or admin can cancel"
+        );
         require(game.state == GameState.Waiting, "Game has already started");
         require(
             block.timestamp > game.creationTime + gameExpirationTime,
@@ -485,6 +497,12 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         require(success, "ETH withdrawal failed");
 
         emit Withdrawal(msg.sender, amount);
+    }
+
+    function getPendingWithdrawals(
+        address player
+    ) external view returns (uint256) {
+        return pendingWithdrawals[player];
     }
 
     function getPlayerStats(

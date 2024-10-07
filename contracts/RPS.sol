@@ -2,18 +2,14 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
     using SafeERC20 for IERC20;
-    using SafeMath for uint256;
-    using Counters for Counters.Counter;
 
-    Counters.Counter private gameCounter; // For safely managing game IDs
+    uint256 public gameCounter;
 
     enum GameState {
         Waiting,
@@ -32,11 +28,8 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         GameState state;
         uint256 numberOfTurns;
         uint8[2][] choices;
-        uint256 player1Wins;
-        uint256 player2Wins;
         uint256 lastActionTime;
         address winner;
-        uint256 creationTime;
         bool player1Dispute;
         bool player2Dispute;
     }
@@ -47,23 +40,21 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         uint256 gamesLost;
         uint256 gamesDrawn;
         uint256 gamesCancelled;
-        uint256[] gameIds; // To store all the game IDs a player has participated in
+        uint256[] gameIds;
     }
 
-    mapping(uint256 => Game) public games; // Mapping of game session IDs to games
-    mapping(address => uint256) public pendingWithdrawals; // For handling withdrawals
-    mapping(address => uint256) public allowedTokens; // Mapping for allowed tokens and their minimum stake
-    mapping(address => PlayerStats) public playerStats; // Mapping for player stats
-    mapping(address => address) public tournamentOwners; // ownerAddress => tournamentContractAddress
+    mapping(uint256 => Game) public games;
+    mapping(address => uint256) public allowedTokens;
+    mapping(address => PlayerStats) public playerStats;
+    mapping(address => address) public tournamentOwners;
 
-    address public serverPublicKey; // Public key of the off-chain server
-    uint256 public protocolFee = 20; // 0.2% in basis points
-    uint256 public drawFee = 5; // 0.05% in basis points
-    uint256 public constant FEE_DENOMINATOR = 10000; // Used to calculate percentage
+    address public serverPublicKey;
+    uint256 public protocolFee = 20;
+    uint256 public drawFee = 5;
+    uint256 public constant FEE_DENOMINATOR = 10000;
 
-    uint256 public disputePeriod = 1 hours; // Configurable dispute period
-    uint256 public gameExpirationTime = 1 hours; // Time after which unstarted games can be cancelled
-    uint256 public maxTurns = 7; // Maximum number of turns, must be odd
+    uint256 public disputePeriod = 1 seconds;
+    uint256 public maxTurns = 7;
 
     event GameCreated(
         uint256 indexed gameId,
@@ -84,14 +75,6 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
     event DisputeRaised(uint256 indexed gameId, address indexed player);
     event GameCancelled(uint256 indexed gameId);
     event GameSettled(uint256 indexed gameId, address indexed winner);
-    event Withdrawal(address indexed player, uint256 amount);
-    event ServerPublicKeyUpdated(
-        address indexed oldKey,
-        address indexed newKey
-    );
-    event ProtocolFeeUpdated(uint256 newFee);
-    event DrawFeeUpdated(uint256 newFee);
-    event TokenAllowed(address tokenAddress, uint256 minStake);
     event TournamentGameResultSubmitted(
         uint256 indexed gameId,
         address indexed winner
@@ -101,7 +84,7 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         require(
             msg.sender == games[gameId].player1 ||
                 msg.sender == games[gameId].player2,
-            "Only players involved in the game can call this"
+            "Not a player"
         );
         _;
     }
@@ -109,43 +92,42 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
     modifier onlyTournamentOwner(address tournamentContractAddress) {
         require(
             tournamentOwners[msg.sender] == tournamentContractAddress,
-            "Caller is not the owner of the given tournament contract"
+            "Not tournament owner"
+        );
+        _;
+    }
+
+    modifier onlyOwnerOrServer() {
+        require(
+            msg.sender == owner() || msg.sender == serverPublicKey,
+            "Not owner or server"
         );
         _;
     }
 
     constructor(address _serverPublicKey) Ownable(msg.sender) {
         serverPublicKey = _serverPublicKey;
-        gameCounter.increment();
+        gameCounter++;
     }
 
-    // Admin functions
     function setServerPublicKey(address newKey) external onlyOwner {
-        require(newKey != address(0), "New key is zero address");
-        emit ServerPublicKeyUpdated(serverPublicKey, newKey);
+        require(newKey != address(0), "Null address");
         serverPublicKey = newKey;
     }
 
     function setProtocolFee(uint256 newFee) external onlyOwner {
-        require(newFee <= 100, "Protocol fee too high");
+        require(newFee <= 100, "Too high");
         protocolFee = newFee;
-        emit ProtocolFeeUpdated(newFee);
     }
 
     function setDrawFee(uint256 newFee) external onlyOwner {
-        require(newFee <= 100, "Draw fee too high");
+        require(newFee <= 100, "Too high");
         drawFee = newFee;
-        emit DrawFeeUpdated(newFee);
     }
 
     function updateDisputePeriod(uint256 newPeriod) external onlyOwner {
-        require(newPeriod <= 1 hours, "DisputePeriod too high");
+        require(newPeriod <= 1 hours, "Too high");
         disputePeriod = newPeriod;
-    }
-
-    function updategameExpirationTime(uint256 newPeriod) external onlyOwner {
-        require(newPeriod <= 24 hours, "GameExpirationTime too high");
-        gameExpirationTime = newPeriod;
     }
 
     function allowToken(
@@ -155,15 +137,48 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         require(tokenAddress != address(0), "Invalid token address");
         require(minStake > 0, "Minstake cannot be zero");
         allowedTokens[tokenAddress] = minStake;
-        emit TokenAllowed(tokenAddress, minStake);
     }
 
-    // Function to whitelist an address as a tournament owner along with its associated tournament contract
+    function getGameDetails(
+        uint256 gameId
+    )
+        external
+        view
+        returns (
+            address player1,
+            address player2,
+            uint256 stakeAmount,
+            address tokenAddress,
+            uint256 numberOfTurns, // Change this to uint8 to match the type in the Game struct
+            GameState state,
+            uint256 lastActionTime,
+            address winner
+        )
+    {
+        Game storage game = games[gameId];
+        return (
+            game.player1,
+            game.player2,
+            game.stakeAmount,
+            game.tokenAddress,
+            game.numberOfTurns, // This is a uint8, so it should match the return type
+            game.state,
+            game.lastActionTime,
+            game.winner
+        );
+    }
+
+    function getAllowedTokens(
+        address tokenAddress
+    ) external view returns (uint256) {
+        uint256 minStake = allowedTokens[tokenAddress];
+        return minStake;
+    }
 
     function addTournamentOwner(
         address _owner,
         address _tournamentContractAddress
-    ) external onlyOwner {
+    ) external onlyOwnerOrServer {
         require(_owner != address(0), "Invalid owner address");
         require(
             _tournamentContractAddress != address(0),
@@ -172,23 +187,21 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         tournamentOwners[_owner] = _tournamentContractAddress;
     }
 
-    // Function to remove an address and its associated tournament contract from the whitelist
-    function removeTournamentOwner(address _owner) external onlyOwner {
+    function removeTournamentOwner(address _owner) external onlyOwnerOrServer {
         require(
             tournamentOwners[_owner] != address(0),
-            "Address is not a tournament owner"
+            "Not a tournament owner"
         );
         delete tournamentOwners[_owner];
     }
 
-    // Create a new game
     function createGame(
         uint256 stakeAmount,
         address tokenAddress,
         uint256 numberOfTurns
     ) external payable whenNotPaused nonReentrant {
-        require(stakeAmount > 0, "Stake amount must be greater than zero");
-        require(numberOfTurns > 0 && numberOfTurns % 2 == 1, "Invalid turns");
+        require(stakeAmount > 0, "Stake amount cannot be zero");
+        require(numberOfTurns > 0, "Invalid turns");
 
         if (tokenAddress == address(0)) {
             require(msg.value == stakeAmount, "Incorrect ETH amount sent");
@@ -205,8 +218,8 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
             );
         }
 
-        uint256 gameId = gameCounter.current(); // Get current gameId
-        gameCounter.increment(); // Increment game counter
+        uint256 gameId = gameCounter;
+        gameCounter++;
         updatePlayerGameStats(msg.sender, gameId);
 
         uint8[2][] memory initialChoices = new uint8[2][](numberOfTurns);
@@ -221,11 +234,8 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
             tokenAddress: tokenAddress,
             state: GameState.Waiting,
             numberOfTurns: numberOfTurns,
-            player1Wins: 0,
-            player2Wins: 0,
             lastActionTime: block.timestamp,
             winner: address(0),
-            creationTime: block.timestamp,
             player1Dispute: false,
             player2Dispute: false,
             choices: initialChoices
@@ -240,7 +250,6 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         );
     }
 
-    // Join the game
     function joinGame(
         uint256 gameId
     ) external payable whenNotPaused nonReentrant {
@@ -266,7 +275,6 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         emit GameJoined(gameId, msg.sender);
     }
 
-    // Cancel game by players when it's in progress
     function cancelByAgreement(
         uint256 gameId
     ) external whenNotPaused onlyPlayers(gameId) nonReentrant {
@@ -274,7 +282,7 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         require(
             game.state == GameState.InProgress ||
                 game.state == GameState.Dispute,
-            "Game must be in progress or in dispute to cancel by agreement"
+            "Game state is not progress or dispute"
         );
 
         if (msg.sender == game.player1) {
@@ -310,12 +318,8 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
     function submitGameResult(
         uint256 gameId,
         address winner,
-        uint8 player1Wins,
-        uint8 player2Wins,
-        uint8[2][] memory choices,
-        bytes32 hash,
-        bytes memory signature
-    ) external whenNotPaused onlyOwner nonReentrant {
+        uint8[2][] memory choices
+    ) external whenNotPaused onlyOwnerOrServer nonReentrant {
         Game storage game = games[gameId];
         require(game.state == GameState.InProgress, "Game is not in progress");
 
@@ -331,15 +335,7 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
             "Invalid number of choices"
         );
 
-        bytes32 recomputedHash = keccak256(
-            abi.encodePacked(gameId, player1Wins, player2Wins, winner)
-        );
-        require(recomputedHash == hash, "Hash mismatch");
-        require(verifySignature(hash, signature), "Invalid signature");
-
         game.choices = choices;
-        game.player1Wins = player1Wins;
-        game.player2Wins = player2Wins;
         game.winner = winner;
         game.state = GameState.Completed;
         game.lastActionTime = block.timestamp;
@@ -351,7 +347,7 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
 
     function approveWinner(
         uint256 gameId
-    ) external whenNotPaused onlyOwner nonReentrant {
+    ) external whenNotPaused onlyOwnerOrServer nonReentrant {
         Game storage game = games[gameId];
         require(game.state == GameState.Completed, "Game must be completed");
         require(
@@ -360,7 +356,7 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         );
 
         address winner = game.winner;
-        uint256 totalStake = game.stakeAmount.mul(2);
+        uint256 totalStake = game.stakeAmount * 2;
         _handleWinnerOrDraw(gameId, totalStake, winner);
         updatePlayerGameResultStats(gameId, winner);
 
@@ -368,18 +364,14 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         emit GameSettled(gameId, winner);
     }
 
-    // Any one or both players submitting dispute within dispute period
     function raiseDispute(
         uint256 gameId
     ) external whenNotPaused onlyPlayers(gameId) nonReentrant {
         Game storage game = games[gameId];
-        require(
-            game.state == GameState.Completed,
-            "Dispute can only be raised for completed games"
-        );
+        require(game.state == GameState.Completed, "Not a completed games");
         require(
             block.timestamp <= game.lastActionTime + disputePeriod,
-            "Dispute period has expired"
+            "Dispute period expired"
         );
 
         if (msg.sender == game.player1) {
@@ -394,15 +386,14 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         emit DisputeRaised(gameId, msg.sender);
     }
 
-    // Admin resolving dispute
     function resolveDispute(
         uint256 gameId,
         uint8 disputeId
-    ) external onlyOwner whenNotPaused nonReentrant {
+    ) external onlyOwnerOrServer whenNotPaused nonReentrant {
         Game storage game = games[gameId];
         require(game.state == GameState.Dispute, "No dispute to resolve");
         address winner = game.winner;
-        uint256 totalStake = game.stakeAmount.mul(2);
+        uint256 totalStake = game.stakeAmount * 2;
         address otherPlayer = (game.winner == game.player1)
             ? game.player2
             : game.player1;
@@ -430,21 +421,17 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         Game storage game = games[gameId];
         require(
             game.player1 == msg.sender || owner() == msg.sender,
-            "Only game creator or admin can cancel"
+            "Not creator or admin"
         );
-        require(game.state == GameState.Waiting, "Game has already started");
-        require(
-            block.timestamp > game.creationTime + gameExpirationTime,
-            "Game has not expired yet"
-        );
-
+        require(game.state == GameState.Waiting, "Game started");
+        playerStats[game.player1].gamesCancelled++;
         transferFunds(
             game.player1,
             address(this),
             game.stakeAmount,
             game.tokenAddress
         );
-        playerStats[game.player1].gamesCancelled++;
+
         emit GameCancelled(gameId);
     }
 
@@ -456,7 +443,7 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         uint256 amountAfterFee;
         Game storage game = games[gameId];
         if (winner == address(0)) {
-            amountAfterFee = amountAfterCut(totalStake, drawFee).div(2);
+            amountAfterFee = amountAfterCut(totalStake / 2, drawFee);
             transferFunds(
                 game.player1,
                 address(this),
@@ -480,29 +467,25 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         }
     }
 
-    function amountAfterCut(
-        uint256 amount,
-        uint256 cutInBasisPoints
-    ) internal pure returns (uint256) {
-        return amount.sub(amount.mul(cutInBasisPoints).div(FEE_DENOMINATOR));
-    }
-
-    function withdraw() external whenNotPaused nonReentrant {
-        uint256 amount = pendingWithdrawals[msg.sender];
-        require(amount > 0, "No funds to withdraw");
-
-        pendingWithdrawals[msg.sender] = 0;
-
-        (bool success, ) = msg.sender.call{value: amount}("");
-        require(success, "ETH withdrawal failed");
-
-        emit Withdrawal(msg.sender, amount);
-    }
-
-    function getPendingWithdrawals(
-        address player
-    ) external view returns (uint256) {
-        return pendingWithdrawals[player];
+    function withdrawProtocolFunds(
+        address tokenAddress,
+        uint256 amount
+    ) external onlyOwner nonReentrant {
+        if (tokenAddress == address(0)) {
+            // Withdraw ETH
+            require(
+                address(this).balance >= amount,
+                "Insufficient contract balance"
+            );
+            (bool success, ) = owner().call{value: amount}("");
+            require(success, "ETH withdrawal failed");
+        } else {
+            // Withdraw ERC20 Tokens
+            IERC20 token = IERC20(tokenAddress);
+            uint256 tokenBalance = token.balanceOf(address(this));
+            require(tokenBalance >= amount, "Insufficient token balance");
+            token.safeTransfer(owner(), amount);
+        }
     }
 
     function getPlayerStats(
@@ -555,49 +538,13 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         }
     }
 
-    // Helper functions for signature verification
-    function verifySignature(
-        bytes32 hash,
-        bytes memory signature
-    ) internal view returns (bool) {
-        bytes32 ethSignedMessageHash = getEthSignedMessageHash(hash);
-        address signer = recoverSigner(ethSignedMessageHash, signature);
-        return signer == serverPublicKey;
+    function amountAfterCut(
+        uint256 amount,
+        uint256 cutInBasisPoints
+    ) internal pure returns (uint256) {
+        return amount - ((amount * cutInBasisPoints) / FEE_DENOMINATOR);
     }
 
-    function getEthSignedMessageHash(
-        bytes32 _messageHash
-    ) internal pure returns (bytes32) {
-        return
-            keccak256(
-                abi.encodePacked(
-                    "\x19Ethereum Signed Message:\n32",
-                    _messageHash
-                )
-            );
-    }
-
-    function recoverSigner(
-        bytes32 _ethSignedMessageHash,
-        bytes memory _signature
-    ) internal pure returns (address) {
-        (bytes32 r, bytes32 s, uint8 v) = splitSignature(_signature);
-        return ecrecover(_ethSignedMessageHash, v, r, s);
-    }
-
-    function splitSignature(
-        bytes memory sig
-    ) internal pure returns (bytes32 r, bytes32 s, uint8 v) {
-        require(sig.length == 65, "Invalid signature length");
-
-        assembly {
-            r := mload(add(sig, 32))
-            s := mload(add(sig, 64))
-            v := byte(0, mload(add(sig, 96)))
-        }
-    }
-
-    // Prevent direct ETH transfers
     receive() external payable {
         revert("Direct ETH transfers not allowed");
     }
@@ -609,14 +556,8 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         address tokenAddress
     ) internal {
         if (tokenAddress == address(0)) {
-            if (sender == address(this)) {
-                (bool success, ) = receiver.call{value: amount}("");
-                require(success, "ETH transfer failed");
-            } else {
-                pendingWithdrawals[receiver] = pendingWithdrawals[receiver].add(
-                    amount
-                );
-            }
+            (bool success, ) = receiver.call{value: amount}("");
+            require(success, "ETH transfer failed");
         } else {
             IERC20 token = IERC20(tokenAddress);
             if (sender == address(this)) {
@@ -627,7 +568,6 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         }
     }
 
-    // Create multiple tournament games between pairs of players
     function createTournamentGames(
         address[] calldata player1s,
         address[] calldata player2s,
@@ -642,38 +582,32 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         require(
             player1s.length == player2s.length &&
                 player1s.length == numberOfTurnsList.length,
-            "Input arrays must have the same length"
+            "Input arrays length mismatch"
         );
 
         for (uint256 i = 0; i < player1s.length; i++) {
             require(numberOfTurnsList[i] > 0, "Invalid number of turns");
 
-            uint256 gameId = gameCounter.current(); // Automatically assign the next gameId
-            gameCounter.increment(); // Increment the game counter for the next game
+            uint256 gameId = gameCounter;
+            gameCounter++;
             updatePlayerGameStats(player1s[i], gameId);
             updatePlayerGameStats(player2s[i], gameId);
 
-            // Initialize choices with (3, 3) for each turn (no choice made)
             uint8[2][] memory initialChoices = new uint8[2][](
                 numberOfTurnsList[i]
             );
             for (uint256 j = 0; j < numberOfTurnsList[i]; j++) {
-                initialChoices[j] = [3, 3]; // 3 represents no choice made
+                initialChoices[j] = [3, 3];
             }
-
-            // Create the game with no stake and no token address for tournament games
             games[gameId] = Game({
                 player1: player1s[i],
                 player2: player2s[i],
-                stakeAmount: 0, // No stake for tournament games
-                tokenAddress: address(0), // No token for tournament games
+                stakeAmount: 0,
+                tokenAddress: address(0),
                 state: GameState.InProgress,
                 numberOfTurns: numberOfTurnsList[i],
-                player1Wins: 0,
-                player2Wins: 0,
                 lastActionTime: block.timestamp,
                 winner: address(0),
-                creationTime: block.timestamp,
                 player1Dispute: false,
                 player2Dispute: false,
                 choices: initialChoices
@@ -689,14 +623,11 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
         }
     }
 
-    // Admin function to approve and submit the result of a tournament game
     function SubmitAndApproveTournamentGame(
         uint256 gameId,
         address winner,
-        uint8 player1Wins,
-        uint8 player2Wins,
         uint8[2][] memory choices
-    ) external onlyOwner whenNotPaused nonReentrant {
+    ) external onlyOwnerOrServer whenNotPaused nonReentrant {
         Game storage game = games[gameId];
         require(game.state == GameState.InProgress, "Game is not in progress");
 
@@ -711,16 +642,11 @@ contract RockPaperScissorsGame is ReentrancyGuard, Ownable, Pausable {
             "Invalid number of choices"
         );
 
-        // Update game choices and winner
         game.choices = choices;
-        game.player1Wins = player1Wins;
-        game.player2Wins = player2Wins;
         game.winner = winner;
-        game.state = GameState.Settled; // Mark game as completed
+        game.state = GameState.Settled;
         game.lastActionTime = block.timestamp;
         updatePlayerGameResultStats(gameId, winner);
-
-        // Emit event for tournament game result
         emit TournamentGameResultSubmitted(gameId, winner);
     }
 }

@@ -3,6 +3,7 @@ require("dotenv").config();
 
 const url = "https://evm-rpc-testnet.sei-apis.com";
 const wallet = process.env.PRIVATE_KEY;
+const ETHERSCAN_API = process.env.ETHERSCAN_API_KEY;
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -22,8 +23,23 @@ module.exports = {
     settings: {
       optimizer: {
         enabled: true,
-        runs: 200,
+        runs: 10000,
       },
     },
+  },
+  etherscan: {
+    apiKey: {
+      sei: ETHERSCAN_API,
+    },
+    customChains: [
+      {
+        network: "sei",
+        chainId: 1328,
+        urls: {
+          apiURL: "https://seitrace.com/atlantic-2/api",
+          browserURL: "https://seitrace.com",
+        },
+      },
+    ],
   },
 };

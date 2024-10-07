@@ -1,7 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { arrayify } = require("@ethersproject/bytes");
-const { bigint } = require("hardhat/internal/core/params/argumentTypes");
 
 describe("RockPaperScissorsGame Contract", function () {
   let RockPaperScissorsGame;
@@ -21,11 +20,10 @@ describe("RockPaperScissorsGame Contract", function () {
     token = await Token.deploy(
       "MockToken",
       "MTK",
-      BigInt(1000000000 * (10 ^ 18))
+      BigInt(1000000000 * 10 ** 18)
     );
     await token.waitForDeployment();
     tokenAddress = token.target;
-    // console.log("Token contract deployed");
 
     // Get signers
     [owner, player1, player2, player3, player4, tournamentOwner] =
@@ -43,7 +41,6 @@ describe("RockPaperScissorsGame Contract", function () {
     await rockPaperScissors
       .connect(owner)
       .allowToken(token.target, stakeAmount);
-    // console.log("Token allowed");
   });
 
   it("Should create a new game successfully", async function () {
@@ -116,29 +113,15 @@ describe("RockPaperScissorsGame Contract", function () {
     const player1Wins = 2;
     const player2Wins = 1;
     const winner = player1.address;
-    // Compute the game hash
-    const gameHash = ethers.keccak256(
-      ethers.solidityPacked(
-        ["uint256", "uint8", "uint8", "address"],
-        [1, player1Wins, player2Wins, winner]
-      )
-    );
-    // Owner signs the prefixed hash
-    const signature = await owner.signMessage(arrayify(gameHash));
+
+    const gameChoices = [
+      [0, 1],
+      [1, 2],
+      [2, 0],
+    ];
+
     // Simulate the game completion
-    await rockPaperScissors.submitGameResult(
-      1,
-      player1.address,
-      player1Wins,
-      player2Wins,
-      [
-        [0, 1],
-        [1, 2],
-        [2, 0],
-      ],
-      gameHash,
-      signature
-    );
+    await rockPaperScissors.submitGameResult(1, player1.address, gameChoices);
 
     // Player2 raises a dispute
     await expect(rockPaperScissors.connect(player2).raiseDispute(1))
@@ -171,24 +154,17 @@ describe("RockPaperScissorsGame Contract", function () {
     )
       .to.emit(rockPaperScissors, "TournamentGameCreated")
       .withArgs(1, player1.address, player3.address, turns, tournamentAddress);
-    console.log("wowww");
-    const player1Wins = 2;
-    const player2Wins = 1;
+
+    const gameChoices = [
+      [0, 1],
+      [1, 2],
+      [2, 0],
+    ];
     const winner = player1.address;
 
     // Simulate result submission
     await expect(
-      rockPaperScissors.SubmitAndApproveTournamentGame(
-        1,
-        winner,
-        player1Wins,
-        player2Wins,
-        [
-          [0, 1],
-          [1, 2],
-          [2, 0],
-        ]
-      )
+      rockPaperScissors.SubmitAndApproveTournamentGame(1, winner, gameChoices)
     )
       .to.emit(rockPaperScissors, "TournamentGameResultSubmitted")
       .withArgs(1, player1.address);
@@ -213,34 +189,15 @@ describe("RockPaperScissorsGame Contract", function () {
     // Player2 joins the game
     await rockPaperScissors.connect(player2).joinGame(1);
 
-    // Simulate end of the game by owner
-    const player1Wins = 2;
-    const player2Wins = 1;
+    const gameChoices = [
+      [0, 1],
+      [1, 2],
+      [2, 0],
+    ];
     const winner = player1.address;
 
-    // Compute the game hash
-    const gameHash = ethers.keccak256(
-      ethers.solidityPacked(
-        ["uint256", "uint8", "uint8", "address"],
-        [1, player1Wins, player2Wins, winner]
-      )
-    );
-    // Owner signs the prefixed hash
-    const signature = await owner.signMessage(arrayify(gameHash));
     // Simulate the game completion
-    await rockPaperScissors.submitGameResult(
-      1,
-      player1.address,
-      player1Wins,
-      player2Wins,
-      [
-        [0, 1],
-        [1, 2],
-        [2, 0],
-      ],
-      gameHash,
-      signature
-    );
+    await rockPaperScissors.submitGameResult(1, player1.address, gameChoices);
 
     await rockPaperScissors.connect(owner).updateDisputePeriod(0);
 
@@ -273,33 +230,15 @@ describe("RockPaperScissorsGame Contract", function () {
     await token.connect(player2).approve(rockPaperScissorsAddress, stakeAmount);
     await rockPaperScissors.connect(player2).joinGame(1);
 
-    const player1Wins = 2;
-    const player2Wins = 1;
+    const gameChoices = [
+      [0, 1],
+      [1, 2],
+      [2, 0],
+    ];
     const winner = player1.address;
 
-    // Compute the game hash
-    const gameHash = ethers.keccak256(
-      ethers.solidityPacked(
-        ["uint256", "uint8", "uint8", "address"],
-        [1, player1Wins, player2Wins, winner]
-      )
-    );
-    // Owner signs the prefixed hash
-    const signature = await owner.signMessage(arrayify(gameHash));
     // Simulate the game completion
-    await rockPaperScissors.submitGameResult(
-      1,
-      player1.address,
-      player1Wins,
-      player2Wins,
-      [
-        [0, 1],
-        [1, 2],
-        [2, 0],
-      ],
-      gameHash,
-      signature
-    );
+    await rockPaperScissors.submitGameResult(1, player1.address, gameChoices);
 
     // Player2 raises a dispute
     await rockPaperScissors.connect(player2).raiseDispute(1);
@@ -396,35 +335,17 @@ describe("RockPaperScissorsGame Contract", function () {
       .to.emit(rockPaperScissors, "GameJoined")
       .withArgs(1, player2.address);
 
-    const player1Wins = 2;
-    const player2Wins = 1;
+    const gameChoices = [
+      [0, 1],
+      [1, 2],
+      [2, 0],
+    ];
     const winner = player1.address;
 
-    // Compute the game hash
-    const gameHash = ethers.keccak256(
-      ethers.solidityPacked(
-        ["uint256", "uint8", "uint8", "address"],
-        [1, player1Wins, player2Wins, winner]
-      )
-    );
-    // Owner signs the prefixed hash
-    const signature = await owner.signMessage(arrayify(gameHash));
     // Simulate the game completion
-    await rockPaperScissors.submitGameResult(
-      1,
-      player1.address,
-      player1Wins,
-      player2Wins,
-      [
-        [0, 1],
-        [1, 2],
-        [2, 0],
-      ],
-      gameHash,
-      signature
-    );
+    await rockPaperScissors.submitGameResult(1, player1.address, gameChoices);
 
-    await ethers.provider.send("evm_increaseTime", [60 * 61]); // Increase time by 25 hours
+    await ethers.provider.send("evm_increaseTime", [60 * 61]); // Increase time by 61 minutes
     await ethers.provider.send("evm_mine");
 
     const player1BalanceBefore = await ethers.provider.getBalance(
@@ -438,13 +359,13 @@ describe("RockPaperScissorsGame Contract", function () {
       player1.address
     );
 
-    const rewardRecieved = player1BalanceAfter - player1BalanceBefore;
+    const rewardReceived = player1BalanceAfter - player1BalanceBefore;
 
     const protocolFee =
       (stakeAmountETH * BigInt(2) * (await rockPaperScissors.protocolFee())) /
       (await rockPaperScissors.FEE_DENOMINATOR());
     const amountAfterFee = stakeAmountETH * BigInt(2) - protocolFee;
 
-    expect(rewardRecieved).to.equal(amountAfterFee);
+    expect(rewardReceived).to.equal(amountAfterFee);
   });
 });

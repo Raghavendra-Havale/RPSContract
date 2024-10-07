@@ -1,18 +1,19 @@
 const { ethers, run, network } = require("hardhat");
 
 async function main() {
-  const SimpleStorageFactory = await ethers.getContractFactory(
-    "RockPaperScissorsGame"
-  );
+  const SimpleStorageFactory = await ethers.getContractFactory("RPSConnector");
   console.log("Deploying contract...");
   const owner = "0x3103Cac5ad1fC41aF7e00E0d42665d9a690574d8";
-  const simpleStorage = await SimpleStorageFactory.deploy(owner);
+  // const tokenName = "MyToken";
+  // const tokenSymbol = "MT";
+  // const supply = "1000000000000000000000000000000000";
+  const simpleStorage = await SimpleStorageFactory.deploy();
   const simpleStorageaddress = await simpleStorage.getAddress();
   console.log(`Deployed contract to : ${simpleStorageaddress}`);
 
-  if (network.config.chainId === 245022926 && process.env.ETHERSCAN_API_KEY) {
+  if (network.config.chainId === 1328 && process.env.ETHERSCAN_API_KEY) {
     await simpleStorage.deploymentTransaction(6);
-    await customVerify(simpleStorageaddress, [owner]);
+    await customVerify(simpleStorageaddress, []);
   }
 }
 
